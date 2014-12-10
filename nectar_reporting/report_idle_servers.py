@@ -7,6 +7,7 @@ from nectar_reporting.nova import client as nova_client
 from nectar_reporting.keystone import client as keystone_client
 from nectar_reporting.ceilometer import client as ceilometer_client
 from nectar_reporting import config
+from nectar_reporting.common import with_retries
 
 log = logging.getLogger(__file__)
 
@@ -97,7 +98,7 @@ def main():
     for server_object in servers:
         server = server_object.to_dict()
         owner = server_owner(server_object)
-        stats = server_metrics(server_object)
+        stats = with_retries(server_metrics, server_object)
         zone = server['OS-EXT-AZ:availability_zone']
         launch_date = server['created']
         age = (datetime.now() - parse_date(launch_date))
