@@ -11,7 +11,7 @@ from nectar_reporting.ceilometer import client as ceilometer_client
 from nectar_reporting import config
 from nectar_reporting.common import with_retries
 
-log = logging.getLogger(__file__)
+LOG = logging.getLogger(__name__)
 
 
 def parse_date(date_string):
@@ -24,18 +24,47 @@ def seconds_to_days(seconds):
     return seconds/60/60/24
 
 
-def list_servers(flavor):
-    n_client = nova_client()
-    servers = n_client.servers.list(search_opts={'all_tenants': 1,
-                                                 'flavor': flavor.id})
+def list_servers(limit=None, **kwargs):
+    client = nova_client()
+    servers = []
+    marker = None
+    opts = {"all_tenants": True}
+    if limit:
+        opts['limit'] = limit
+    opts.update(kwargs)
+
+    while True:
+        if marker:
+            opts["marker"] = marker
+
+        try:
+            result = client.servers.list(search_opts=opts)
+        except Exception as exception:
+            LOG.exception(exception)
+            sys.exit(1)
+
+        if not result:
+            break
+
+        servers.extend(result)
+
+        # Quit if we have got enough servers.
+        if limit and len(servers) >= int(limit):
+            break
+
+        marker = servers[-1].id
     return servers
 
 
-def list_flavors(names):
-    n_client = nova_client()
-    for flavor in n_client.flavors.list():
+def filter_flavors(flavors, names):
+    for flavor in flavors:
         if flavor.name in names:
             yield flavor
+
+
+def list_flavors():
+    n_client = nova_client()
+    return n_client.flavors.list()
 
 
 def server_owner(server):
@@ -56,10 +85,13 @@ def server_metrics(server):
 
 
 def report(parser, target_flavors):
-    flavors = list(list_flavors(target_flavors))
-    if not flavors:
-        parser.error("Can't find any flavors matching, %s" % target_flavors)
-    servers = list_servers(flavors[0])
+    flavors = list_flavors()
+    if not list(filter_flavors(flavors, target_flavors)):
+        parser.error("Can't find any flavors matching, %s in %s"
+                     % (target_flavors, [f.name for f in flavors]))
+    servers = []
+    for flavor in filter_flavors(flavors, target_flavors):
+        servers.extend(list_servers(flavor=flavor.id))
     csv_file = csv.writer(sys.stdout)
     csv_file.writerow(['Server UUID',
                        'Tenant UUID',
