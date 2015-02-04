@@ -1,6 +1,8 @@
 import csv
 import logging
 import sys
+import pdb
+import traceback
 from datetime import datetime
 
 from nectar_reporting.nova import client as nova_client
@@ -53,36 +55,10 @@ def server_metrics(server):
     return stats[0].to_dict() if len(stats) > 0 else {}
 
 
-def main():
-    from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-    parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument(
-        '-v', '--verbose', action='count', default=0,
-        help="Increase verbosity (specify multiple times for more)")
-    parser.add_argument(
-        '-f', '--flavor', action='append', default=[],
-        help="The flavors to report on.")
-    parser.add_argument(
-        '--config', default=config.CONFIG_FILE, type=str,
-        help='Config file path.')
-    args = parser.parse_args()
-    config.read(args.config)
-
-    args = parser.parse_args()
-
-    log_level = logging.WARNING
-    if args.verbose == 1:
-        log_level = logging.INFO
-    elif args.verbose >= 2:
-        log_level = logging.DEBUG
-
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s %(name)s %(levelname)s %(message)s')
-
-    flavors = list(list_flavors(args.flavor))
+def report(parser, target_flavors):
+    flavors = list(list_flavors(target_flavors))
     if not flavors:
-        parser.error("Can't find any flavors matching, %s" % args.flavor)
+        parser.error("Can't find any flavors matching, %s" % target_flavors)
     servers = list_servers(flavors[0])
     csv_file = csv.writer(sys.stdout)
     csv_file.writerow(['Server UUID',
@@ -126,3 +102,44 @@ def main():
                             stats.get('min', '')])
         csv_file.writerow(row)
         sys.stdout.flush()
+
+
+def main():
+    from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+    parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument(
+        '-v', '--verbose', action='count', default=0,
+        help="Increase verbosity (specify multiple times for more)")
+    parser.add_argument(
+        '-f', '--flavor', action='append', default=[],
+        help="The flavors to report on.")
+    parser.add_argument(
+        '--pdb', action='store_true', default=False,
+        help="Unable PDB on error.")
+    parser.add_argument(
+        '--config', default=config.CONFIG_FILE, type=str,
+        help='Config file path.')
+    args = parser.parse_args()
+    config.read(args.config)
+
+    args = parser.parse_args()
+
+    log_level = logging.WARNING
+    if args.verbose == 1:
+        log_level = logging.INFO
+    elif args.verbose >= 2:
+        log_level = logging.DEBUG
+
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s %(name)s %(levelname)s %(message)s')
+
+    try:
+        report(parser, args.flavor)
+    except:
+        if args.pdb:
+            type, value, tb = sys.exc_info()
+            traceback.print_exc()
+            pdb.post_mortem(tb)
+        else:
+            raise
