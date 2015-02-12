@@ -3,6 +3,7 @@ import logging
 import sys
 import pdb
 import traceback
+import tempfile
 from datetime import datetime
 
 from nectar_reporting.nova import client as nova_client
@@ -10,6 +11,7 @@ from nectar_reporting.keystone import client as keystone_client
 from nectar_reporting.ceilometer import client as ceilometer_client
 from nectar_reporting import config
 from nectar_reporting.common import with_retries
+from nectar_reporting import mail
 
 LOG = logging.getLogger(__name__)
 
@@ -84,15 +86,24 @@ def server_metrics(server):
     return stats[0].to_dict() if len(stats) > 0 else {}
 
 
-def report(parser, target_flavors):
+def filtered_servers(parser, target_flavors, limit=None):
     flavors = list_flavors()
     if not list(filter_flavors(flavors, target_flavors)):
         parser.error("Can't find any flavors matching, %s in %s"
                      % (target_flavors, [f.name for f in flavors]))
     servers = []
     for flavor in filter_flavors(flavors, target_flavors):
-        servers.extend(list_servers(flavor=flavor.id))
-    csv_file = csv.writer(sys.stdout)
+        servers.extend(list_servers(limit=limit, flavor=flavor.id))
+    if limit:
+        return servers[:limit]
+    else:
+        return servers
+
+
+def report(servers, file=None):
+    if not file:
+        file = tempfile.TemporaryFile()
+    csv_file = csv.writer(file)
     csv_file.writerow(['Server UUID',
                        'Tenant UUID',
                        'Email',
@@ -133,7 +144,8 @@ def report(parser, target_flavors):
                             stats.get('max', ''),
                             stats.get('min', '')])
         csv_file.writerow(row)
-        sys.stdout.flush()
+    file.seek(0)
+    return file
 
 
 def main():
@@ -145,6 +157,12 @@ def main():
     parser.add_argument(
         '-f', '--flavor', action='append', default=[],
         help="The flavors to report on.")
+    parser.add_argument(
+        '--email', action='store_true', default=False,
+        help="Email the report on completion.")
+    parser.add_argument(
+        '--limit',  default=None, type=int,
+        help="The number of servers to report on.")
     parser.add_argument(
         '--pdb', action='store_true', default=False,
         help="Unable PDB on error.")
@@ -167,7 +185,15 @@ def main():
         format='%(asctime)s %(name)s %(levelname)s %(message)s')
 
     try:
-        report(parser, args.flavor)
+        servers = filtered_servers(parser, args.flavor, limit=args.limit)
+        file = report(servers)
+        if args.email:
+            mail.send("Idle Servers Report",
+                      "Attached is the idle servers report.",
+                      filename="idle_servers",
+                      csv_file=file)
+        else:
+            print file.read()
     except:
         if args.pdb:
             type, value, tb = sys.exc_info()
